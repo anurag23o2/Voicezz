@@ -31,6 +31,7 @@
   </component>
   <component name="PropertiesComponent"><![CDATA[{
   "keyToString": {
+    "ASKED_ADD_EXTERNAL_FILES": "true",
     "Python.app.executor": "Run",
     "Python.soundpy.executor": "Run",
     "RunOnceActivity.ShowReadmeOnStart": "true",
