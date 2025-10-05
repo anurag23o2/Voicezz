@@ -1,0 +1,7 @@
+portaudio19-dev
+python3-pyaudio
+alsa-utils
+xvfb
+scrot
+python3-tk
+python3-dev
