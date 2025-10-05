@@ -1,5 +1,4 @@
 import streamlit as st
-import speech_recognition as sr
 from PIL import Image, ImageDraw
 import sys
 import os
@@ -12,14 +11,28 @@ backend_dir = os.path.join(parent_dir, 'backend')
 if backend_dir not in sys.path:
     sys.path.insert(0, backend_dir)
 
+# Try to import speech recognition (optional for cloud)
 try:
-    from soundpy import perform_action, check_reminders
+    import speech_recognition as sr
+
+    SPEECH_AVAILABLE = True
+except ImportError:
+    SPEECH_AVAILABLE = False
+    st.warning("⚠️ Speech recognition not available. Using text input mode.")
+
+# Import cloud-compatible backend
+try:
+    from soundpy_cloud import perform_action, check_reminders
 
     BACKEND_LOADED = True
-except ImportError as e:
-    st.error(f"❌ Cannot import backend: {e}")
-    st.info("💡 Make sure soundpy.py is in the backend folder")
-    BACKEND_LOADED = False
+except ImportError:
+    try:
+        from soundpy import perform_action, check_reminders
+
+        BACKEND_LOADED = True
+    except ImportError as e:
+        st.error(f"❌ Cannot import backend: {e}")
+        BACKEND_LOADED = False
 
 st.set_page_config(page_title="Voice Assistant", layout="centered")
 
@@ -35,6 +48,8 @@ if 'log' not in st.session_state:
 
 # ---- Title ----
 st.title("🎤 Voice Assistant")
+if not SPEECH_AVAILABLE:
+    st.info("💡 Running in text mode. Voice features require local installation.")
 st.markdown("---")
 
 
@@ -80,13 +95,13 @@ def listen_and_act():
         st.error("❌ Backend not loaded. Cannot execute commands.")
         return
 
+    if not SPEECH_AVAILABLE:
+        st.error("❌ Speech recognition not available.")
+        return
+
     recognizer = sr.Recognizer()
 
-    # Add to log
-    st.session_state.log.append(f"[{st.session_state.status}] Button clicked")
-
     try:
-        # Check if microphone is available
         st.session_state.status = "🔍 Checking microphone..."
         st.session_state.log.append("Checking microphone...")
         status_placeholder.markdown(f"### Status: {st.session_state.status}")
@@ -115,14 +130,11 @@ def listen_and_act():
         # Recognize speech
         command = recognizer.recognize_google(audio)
         st.session_state.last_command = command
-        st.session_state.status = f"✅ Recognized: {command}"
         st.session_state.log.append(f"Recognized: {command}")
 
         # Perform the action
         result = perform_action(command)
-        if result:
-            st.session_state.status = result
-            st.session_state.log.append(f"Result: {result}")
+        process_result(result)
 
         # Check reminders
         reminders_triggered = check_reminders()
@@ -153,22 +165,82 @@ def listen_and_act():
     st.rerun()
 
 
-# ---- Control Buttons ----
-st.markdown("---")
-col1, col2, col3 = st.columns([1, 2, 1])
+# ---- Text Input Function ----
+def process_text_command(command):
+    """Process text-based commands"""
+    if not BACKEND_LOADED:
+        st.error("❌ Backend not loaded.")
+        return
 
-with col2:
-    if st.button("🎙️ Start Listening", type="primary", disabled=not BACKEND_LOADED):
-        st.session_state.log.append("=== NEW REQUEST ===")
-        listen_and_act()
+    st.session_state.last_command = command
+    st.session_state.log.append(f"Text command: {command}")
+
+    result = perform_action(command)
+    process_result(result)
+
+    # Check reminders
+    reminders_triggered = check_reminders()
+    for reminder in reminders_triggered:
+        st.info(reminder)
+        st.session_state.log.append(reminder)
+
+
+def process_result(result):
+    """Process the result from backend"""
+    if isinstance(result, dict):
+        if result.get("type") == "link":
+            st.session_state.status = result["message"]
+            st.markdown(f"[🔗 Click here to open]({result['url']})")
+        elif result.get("type") == "error":
+            st.session_state.status = result["message"]
+            st.error(result["message"])
+        else:
+            st.session_state.status = result.get("message", "✅ Command executed")
+            st.success(result.get("message", "✅ Command executed"))
+    else:
+        st.session_state.status = str(result) if result else "✅ Command executed"
+
+
+# ---- Text Input Mode ----
+st.markdown("---")
+st.markdown("### Enter Command:")
+command_input = st.text_input(
+    "Type your command",
+    placeholder="e.g., open youtube, search for python tutorials",
+    label_visibility="collapsed"
+)
+
+# ---- Control Buttons ----
+col1, col2, col3 = st.columns([1, 1, 1])
+
+if SPEECH_AVAILABLE:
+    with col1:
+        if st.button("🎙️ Voice", type="secondary", disabled=not BACKEND_LOADED):
+            st.session_state.log.append("=== VOICE REQUEST ===")
+            listen_and_act()
+
+with col2 if SPEECH_AVAILABLE else col1:
+    if st.button("🚀 Execute", type="primary", disabled=not BACKEND_LOADED):
+        if command_input:
+            st.session_state.log.append("=== TEXT REQUEST ===")
+            process_text_command(command_input)
+            st.rerun()
+        else:
+            st.warning("Please enter a command first!")
+
+with col3 if SPEECH_AVAILABLE else col2:
+    if st.button("🔄 Clear"):
+        st.session_state.last_command = ""
+        st.session_state.status = "Ready"
+        st.rerun()
 
 # ---- Debug Log ----
 with st.expander("🐛 Debug Log"):
     if st.session_state.log:
-        for log_entry in st.session_state.log[-20:]:  # Show last 20 entries
+        for log_entry in st.session_state.log[-20:]:
             st.text(log_entry)
     else:
-        st.text("No logs yet. Click 'Start Listening' to begin.")
+        st.text("No logs yet.")
 
     if st.button("Clear Log"):
         st.session_state.log = []
@@ -177,44 +249,50 @@ with st.expander("🐛 Debug Log"):
 # ---- Command Examples ----
 with st.expander("📋 Available Commands"):
     st.markdown("""
-    **YouTube Controls:**
-    - 'Play [song name] on YouTube'
-    - 'Pause music' or 'Pause'
-    - 'Resume music' or 'Resume'
-
     **Web Browsing:**
     - 'Open YouTube'
     - 'Open Google'
     - 'Search for [query]'
-
-    **Volume Control:**
-    - 'Mute' / 'Unmute'
-    - 'Volume up' / 'Volume down'
-    - 'Increase volume' / 'Decrease volume'
+    - 'Play [song name] on YouTube'
 
     **Reminders & Alarms:**
     - 'Set reminder for 10 seconds to check oven'
     - 'Set alarm for 14:30'
 
-    **System:**
-    - 'Shutdown' (simulated)
+    **Note:** Audio controls (volume, pause/resume) require local installation.
+    """)
+
+# ---- Installation Instructions ----
+with st.expander("💻 Install Full Version Locally"):
+    st.markdown("""
+    For voice recognition and desktop automation:
+
+    ```bash
+    # Clone the repository
+    git clone https://github.com/yourusername/voicezz.git
+    cd voicezz
+
+    # Install dependencies
+    pip install -r requirements.txt
+
+    # Run locally
+    streamlit run frontend/app.py
+    ```
     """)
 
 # ---- System Check ----
 with st.expander("⚙️ System Check"):
     st.write("**Backend Status:**", "✅ Loaded" if BACKEND_LOADED else "❌ Not Loaded")
+    st.write("**Speech Recognition:**", "✅ Available" if SPEECH_AVAILABLE else "❌ Not Available")
 
-    # Check microphone
-    try:
-        mic_list = sr.Microphone.list_microphone_names()
-        st.write("**Available Microphones:**")
-        for idx, name in enumerate(mic_list):
-            st.text(f"  [{idx}] {name}")
-    except Exception as e:
-        st.error(f"Cannot list microphones: {e}")
-
-    st.write("**Python Path:**")
-    st.code("\n".join(sys.path[:3]))
+    if SPEECH_AVAILABLE:
+        try:
+            mic_list = sr.Microphone.list_microphone_names()
+            st.write("**Available Microphones:**")
+            for idx, name in enumerate(mic_list):
+                st.text(f"  [{idx}] {name}")
+        except Exception as e:
+            st.error(f"Cannot list microphones: {e}")
 
 # ---- Footer ----
 st.markdown("---")
